@@ -3,7 +3,7 @@ import * as https from 'https';
 
 /** @walnut_method
  * name: Read OTP from MS Mail
- * description: Read OTP from email with subject ${subjectLine} for ${emailAddress} using clientId ${clientId} clientSecret ${clientSecret} tenantId ${tenantId}
+ * description: Read OTP from email with subject ${subjectLine} for ${emailAddress} and store in $[otp]
  * actionType: custom_read_otp_ms_mail
  * context: shared
  * needsLocator: false
@@ -11,14 +11,17 @@ import * as https from 'https';
  */
 export async function readOtpFromMsMail(ctx: WalnutContext) {
   // Get parameters from step arguments (from ${} placeholders in description)
-  const subjectLine = ctx.args[0];
-  const emailAddress = ctx.args[1];
-  const clientId = ctx.args[2];
-  const clientSecret = ctx.args[3];
-  const tenantId = ctx.args[4];
+  const subjectLine = ctx.args[0];              // from ${subjectLine} — business parameter
+  const emailAddress = ctx.args[1];             // from ${emailAddress} — business parameter
+  const outputVar = ctx.args[2];                // from $[otp] — runtime variable name
+  
+  // Get credentials from test data params (not from description placeholders)
+  const clientId = ctx.params.clientId;         // from test data — credential
+  const clientSecret = ctx.params.clientSecret; // from test data — credential
+  const tenantId = ctx.params.tenantId;         // from test data — credential
   
   if (!clientId || !clientSecret || !tenantId) {
-    throw new Error('Missing required MS Graph API credentials: clientId, clientSecret, and tenantId');
+    throw new Error('Missing required MS Graph API credentials in test data: clientId, clientSecret, and tenantId');
   }
   
   if (!subjectLine || !emailAddress) {
@@ -105,9 +108,9 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     throw new Error(`Failed to find email with subject "${subjectLine}" or extract OTP within 60 seconds`);
   }
   
-  // Save OTP to variable context
-  ctx.setVariable('otp', otpCode);
-  ctx.log(`OTP saved to variable 'otp': ${otpCode}`);
+  // Save OTP to variable context using the variable name from $[otp] placeholder
+  ctx.setVariable(outputVar, otpCode);
+  ctx.log(`OTP saved to variable '${outputVar}': ${otpCode}`);
 }
 
 // Helper function to make HTTPS requests
