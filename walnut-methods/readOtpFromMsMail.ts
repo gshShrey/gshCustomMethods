@@ -109,6 +109,8 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
   // Save OTP to variable context using the variable name from $[otp] placeholder
   ctx.setVariable(outputVar, otpCode);
   ctx.log(`OTP saved to variable '${outputVar}': ${otpCode}`);
+  
+  return otpCode;
 }
 
 // Helper function to make HTTPS requests
