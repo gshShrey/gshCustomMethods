@@ -3,7 +3,7 @@ import * as https from 'https';
 
 /** @walnut_method
  * name: Read OTP from MS Mail
- * description: Read OTP from email with subject ${subjectLine} for ${emailAddress} and store in $[otp]
+ * description: Read OTP from email with subject ${subjectLine} for ${emailAddress} using credentials ${clientId} ${clientSecret} ${tenantId} and store in $[otp]
  * actionType: custom_read_otp_ms_mail
  * context: shared
  * needsLocator: false
@@ -48,18 +48,16 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Get parameters from step arguments (from ${} placeholders in description)
-  const subjectLine = ctx.args[0];              // from ${subjectLine} — business parameter
-  const emailAddress = ctx.args[1];             // from ${emailAddress} — business parameter
-  const outputVar = ctx.args[2];                // from $[otp] — runtime variable name
-  
-  // Get credentials from test data params (not from description placeholders)
-  const clientId = ctx.params.clientId;         // from test data — credential
-  const clientSecret = ctx.params.clientSecret; // from test data — credential
-  const tenantId = ctx.params.tenantId;         // from test data — credential
+  // Get all parameters from step arguments (from ${} placeholders in description)
+  const subjectLine = ctx.args[0];    // from ${subjectLine}
+  const emailAddress = ctx.args[1];   // from ${emailAddress}
+  const clientId = ctx.args[2];       // from ${clientId}
+  const clientSecret = ctx.args[3];   // from ${clientSecret}
+  const tenantId = ctx.args[4];       // from ${tenantId}
+  const outputVar = ctx.args[5];      // from $[otp] — runtime variable name
   
   if (!clientId || !clientSecret || !tenantId) {
-    throw new Error('Missing required MS Graph API credentials in test data: clientId, clientSecret, and tenantId');
+    throw new Error('Missing required MS Graph API credentials: clientId, clientSecret, and tenantId');
   }
   
   if (!subjectLine || !emailAddress) {
@@ -162,11 +160,15 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     }
   }
   
+  ctx.log(`DEBUG: emailFound=${emailFound}, otpCode=${otpCode}`);
+  
   if (!emailFound || !otpCode) {
     throw new Error(`Failed to find email with subject "${subjectLine}" or extract OTP within 60 seconds`);
   }
   
+  ctx.log(`DEBUG: About to call ctx.setVariable with outputVar="${outputVar}", otpCode="${otpCode}"`);
+  
   // Save OTP to variable context using the variable name from $[otp] placeholder
   ctx.setVariable(outputVar, otpCode);
-  ctx.log(`OTP saved to variable '${outputVar}': ${otpCode}`);
+  ctx.log(`✓ OTP saved to variable '${outputVar}': ${otpCode}`);
 }
