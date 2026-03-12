@@ -66,10 +66,12 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     throw new Error('Missing required parameters: subjectLine and emailAddress');
   }
   
-  // Capture current timestamp - only look for emails received AFTER this time
-  const startTime = new Date();
   ctx.log(`Reading OTP from email: ${emailAddress}, subject: "${subjectLine}"`);
-  ctx.log(`Will only search for emails received after: ${startTime.toISOString()}`);
+  
+  // Wait 5 seconds at the beginning to allow email to arrive
+  ctx.log('Waiting 5 seconds for email to arrive...');
+  await sleep(5000);
+  
   ctx.log('Getting access token for Microsoft Graph API...');
   
   // Get access token
@@ -102,35 +104,38 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     const messages = JSON.parse(messagesResponse);
     
     if (messages.value && messages.value.length > 0) {
+      ctx.log(`Found ${messages.value.length} recent emails, checking each one...`);
+      
       // Search through recent messages for matching subject (partial match)
       for (const message of messages.value) {
-        // Parse the received timestamp
         const receivedTime = new Date(message.receivedDateTime);
         
-        // Only process emails received AFTER the method was called
-        if (receivedTime <= startTime) {
-          ctx.log(`Skipping old email from ${receivedTime.toISOString()} (before ${startTime.toISOString()})`);
-          continue; // Skip old emails
-        }
+        ctx.log(`Checking email: "${message.subject}" received at ${receivedTime.toISOString()}`);
         
         if (message.subject && message.subject.includes(subjectLine)) {
+          ctx.log(`  ✓ Subject matches! Looking for OTP...`);
           const emailBody = message.body.content;
-          ctx.log(`Email found with subject: "${message.subject}", received at: ${receivedTime.toISOString()}, extracting OTP...`);
+          
+          // Strip HTML tags and get plain text for better matching
+          const plainText = emailBody.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          ctx.log(`  Email body preview (first 300 chars): ${plainText.substring(0, 300)}`);
           
           // Extract OTP using regex patterns (try multiple common formats)
           const otpPatterns = [
-            /Verification Code:\s*(\d{6})/i,
-            /OTP:\s*(\d{6})/i,
-            /code:\s*(\d{6})/i,
-            /\b(\d{6})\b/
+            /(?:verification\s*code|otp|code)[\s:]*(\d{4,8})/i,  // "Verification Code: 123456"
+            /\b(\d{6})\b/,                                        // Standalone 6-digit number
+            /\b(\d{4})\b/,                                        // Standalone 4-digit number
+            /(?:pin|token)[\s:]*(\d{4,8})/i,                     // PIN or token patterns
+            /is[\s:]*(\d{4,8})/i                                  // "Your code is: 123456"
           ];
           
-          for (const pattern of otpPatterns) {
-            const otpMatch = emailBody.match(pattern);
+          for (let i = 0; i < otpPatterns.length; i++) {
+            const pattern = otpPatterns[i];
+            const otpMatch = plainText.match(pattern);
             if (otpMatch && otpMatch[1]) {
-              otpCode = otpMatch[1];
+              otpCode = otpMatch[1].trim();
               emailFound = true;
-              ctx.log(`OTP extracted successfully: ${otpCode}`);
+              ctx.log(`  ✓ OTP FOUND: ${otpCode} (using pattern #${i + 1})`);
               break;
             }
           }
@@ -138,8 +143,11 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
           if (emailFound) {
             break;
           } else {
-            ctx.warn('Email found but OTP pattern not matched');
+            ctx.warn('  ❌ Email found but no OTP pattern matched');
+            ctx.warn(`  Full email body: ${plainText.substring(0, 1000)}`);
           }
+        } else {
+          ctx.log(`  ❌ Subject does not match (looking for: "${subjectLine}")`);
         }
       }
       
@@ -155,7 +163,7 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
   }
   
   if (!emailFound || !otpCode) {
-    throw new Error(`Failed to find email with subject "${subjectLine}" received after ${startTime.toISOString()} or extract OTP within 60 seconds`);
+    throw new Error(`Failed to find email with subject "${subjectLine}" or extract OTP within 60 seconds`);
   }
   
   // Save OTP to variable context using the variable name from $[otp] placeholder
