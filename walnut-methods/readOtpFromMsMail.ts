@@ -3,30 +3,73 @@ import * as https from 'https';
 
 /** @walnut_method
  * name: Read OTP from MS Mail
- * description: Read OTP from email with subject ${subjectLine} for ${emailAddress} using clientId ${clientId} clientSecret ${clientSecret} tenantId ${tenantId} and store in $[otp]
+ * description: Read OTP from email with subject ${subjectLine} for ${emailAddress} and store in $[otp]
  * actionType: custom_read_otp_ms_mail
  * context: shared
  * needsLocator: false
  * category: Email Automation
  */
 export async function readOtpFromMsMail(ctx: WalnutContext) {
-  // Get parameters from step arguments (from ${} and $[] placeholders in description)
-  const subjectLine = ctx.args[0];              // from ${subjectLine}
-  const emailAddress = ctx.args[1];             // from ${emailAddress}
-  const clientId = ctx.args[2];                 // from ${clientId}
-  const clientSecret = ctx.args[3];             // from ${clientSecret}
-  const tenantId = ctx.args[4];                 // from ${tenantId}
-  const outputVar = ctx.args[5];                // from $[otp] — runtime variable name
+  // Helper function to make HTTPS requests
+  function makeRequest(method: string, url: string, body: string | null, headers: Record<string, string>): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const urlObj = new URL(url);
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: method,
+        headers: headers
+      };
+      
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(data);
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+          }
+        });
+      });
+      
+      req.on('error', reject);
+      
+      if (body) {
+        req.write(body);
+      }
+      
+      req.end();
+    });
+  }
+
+  // Helper function to sleep
+  function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Get parameters from step arguments (from ${} placeholders in description)
+  const subjectLine = ctx.args[0];              // from ${subjectLine} — business parameter
+  const emailAddress = ctx.args[1];             // from ${emailAddress} — business parameter
+  const outputVar = ctx.args[2];                // from $[otp] — runtime variable name
+  
+  // Get credentials from test data params (not from description placeholders)
+  const clientId = ctx.params.clientId;         // from test data — credential
+  const clientSecret = ctx.params.clientSecret; // from test data — credential
+  const tenantId = ctx.params.tenantId;         // from test data — credential
   
   if (!clientId || !clientSecret || !tenantId) {
-    throw new Error('Missing required MS Graph API credentials: clientId, clientSecret, and tenantId');
+    throw new Error('Missing required MS Graph API credentials in test data: clientId, clientSecret, and tenantId');
   }
   
   if (!subjectLine || !emailAddress) {
     throw new Error('Missing required parameters: subjectLine and emailAddress');
   }
   
+  // Capture current timestamp - only look for emails received AFTER this time
+  const startTime = new Date();
   ctx.log(`Reading OTP from email: ${emailAddress}, subject: "${subjectLine}"`);
+  ctx.log(`Will only search for emails received after: ${startTime.toISOString()}`);
   ctx.log('Getting access token for Microsoft Graph API...');
   
   // Get access token
@@ -48,7 +91,7 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     ctx.log(`Searching for email (attempt ${attempt}/${maxAttempts})...`);
     
-    // Fetch recent messages without complex filter - get top 10 recent messages
+    // Fetch recent messages - get top 10 recent messages
     const messagesResponse = await makeRequest(
       'GET',
       `https://graph.microsoft.com/v1.0/users/${emailAddress}/messages?$top=10&$orderby=receivedDateTime desc`,
@@ -61,9 +104,18 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     if (messages.value && messages.value.length > 0) {
       // Search through recent messages for matching subject (partial match)
       for (const message of messages.value) {
+        // Parse the received timestamp
+        const receivedTime = new Date(message.receivedDateTime);
+        
+        // Only process emails received AFTER the method was called
+        if (receivedTime <= startTime) {
+          ctx.log(`Skipping old email from ${receivedTime.toISOString()} (before ${startTime.toISOString()})`);
+          continue; // Skip old emails
+        }
+        
         if (message.subject && message.subject.includes(subjectLine)) {
           const emailBody = message.body.content;
-          ctx.log(`Email found with subject: "${message.subject}", extracting OTP...`);
+          ctx.log(`Email found with subject: "${message.subject}", received at: ${receivedTime.toISOString()}, extracting OTP...`);
           
           // Extract OTP using regex patterns (try multiple common formats)
           const otpPatterns = [
@@ -97,54 +149,16 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     }
     
     if (attempt < maxAttempts) {
-      ctx.log('Email not found, waiting 5 seconds before retry...');
+      ctx.log('Email not found yet, waiting 5 seconds before retry...');
       await sleep(5000);
     }
   }
   
   if (!emailFound || !otpCode) {
-    throw new Error(`Failed to find email with subject "${subjectLine}" or extract OTP within 60 seconds`);
+    throw new Error(`Failed to find email with subject "${subjectLine}" received after ${startTime.toISOString()} or extract OTP within 60 seconds`);
   }
   
   // Save OTP to variable context using the variable name from $[otp] placeholder
   ctx.setVariable(outputVar, otpCode);
   ctx.log(`OTP saved to variable '${outputVar}': ${otpCode}`);
-}
-
-// Helper function to make HTTPS requests
-function makeRequest(method: string, url: string, body: string | null, headers: Record<string, string>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: method,
-      headers: headers
-    };
-    
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(data);
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-        }
-      });
-    });
-    
-    req.on('error', reject);
-    
-    if (body) {
-      req.write(body);
-    }
-    
-    req.end();
-  });
-}
-
-// Helper function to sleep
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
