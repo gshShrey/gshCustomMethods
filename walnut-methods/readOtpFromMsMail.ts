@@ -68,7 +68,7 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
   
   // Wait 5 seconds at the beginning to allow email to arrive
   ctx.log('Waiting 5 seconds for email to arrive...');
-  await sleep(5000);
+  await sleep(10000);
   
   ctx.log('Getting access token for Microsoft Graph API...');
   
@@ -87,6 +87,7 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
   const maxAttempts = 12; // 12 attempts * 5 seconds = 60 seconds
   let emailFound = false;
   let otpCode = '';
+  let messageId = ''; // Store message ID for deletion
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     ctx.log(`Searching for email (attempt ${attempt}/${maxAttempts})...`);
@@ -133,7 +134,8 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
             if (otpMatch && otpMatch[1]) {
               otpCode = otpMatch[1].trim();
               emailFound = true;
-              ctx.log(`  ✓ OTP FOUND: ${otpCode} (using pattern #${i + 1})`);
+              messageId = message.id; // Save message ID for deletion
+              ctx.log(`  ✓ OTP FOUND: ${otpCode} (using pattern #${i + 1}), Email ID: ${messageId}`);
               break;
             }
           }
@@ -160,7 +162,7 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
     }
   }
   
-  ctx.log(`DEBUG: emailFound=${emailFound}, otpCode=${otpCode}`);
+  ctx.log(`DEBUG: emailFound=${emailFound}, otpCode=${otpCode}, messageId=${messageId}`);
   
   if (!emailFound || !otpCode) {
     throw new Error(`Failed to find email with subject "${subjectLine}" or extract OTP within 60 seconds`);
@@ -171,4 +173,21 @@ export async function readOtpFromMsMail(ctx: WalnutContext) {
   // Save OTP to variable context using the variable name from $[otp] placeholder
   ctx.setVariable(outputVar, otpCode);
   ctx.log(`✓ OTP saved to variable '${outputVar}': ${otpCode}`);
+  
+  // Delete the email after successfully reading the OTP
+  if (messageId) {
+    ctx.log(`Deleting email with ID: ${messageId}...`);
+    try {
+      await makeRequest(
+        'DELETE',
+        `https://graph.microsoft.com/v1.0/users/${emailAddress}/messages/${messageId}`,
+        null,
+        { 'Authorization': `Bearer ${accessToken}` }
+      );
+      ctx.log('✓ Email deleted successfully');
+    } catch (deleteError) {
+      ctx.warn(`Failed to delete email: ${deleteError}`);
+      // Don't throw error - OTP was already saved successfully
+    }
+  }
 }
